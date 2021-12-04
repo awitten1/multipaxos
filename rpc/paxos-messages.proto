@@ -1,0 +1,36 @@
+
+syntax = "proto3";
+
+option go_package = "github.com/awitten1/multipaxos/rpc";
+
+service Paxos {
+    rpc ClientCommand(CommandBody) returns (CommandResponse);
+    rpc Prepare(PrepareBody) returns (PromiseBody);
+    rpc Accept(AcceptBody) returns (AcceptedBody);
+}
+
+message PrepareBody {
+    map<uint64, uint64> ballotNumber = 1;
+}
+
+message PromiseBody {
+    map<int64, string> decrees = 1;
+}
+
+message AcceptBody {
+    uint64 ballotNumber = 1;
+    string decree = 2;
+}
+
+message AcceptedBody {
+    bool accepted = 1;
+}
+
+message CommandBody {
+    string decree = 1;
+}
+
+message CommandResponse {
+    bool committed = 1;
+}
+
