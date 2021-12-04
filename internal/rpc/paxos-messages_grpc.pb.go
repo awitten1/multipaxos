@@ -18,6 +18,7 @@ const _ = grpc.SupportPackageIsVersion7
 //
 // For semantics around ctx use and closing/ending streaming RPCs, please refer to https://pkg.go.dev/google.golang.org/grpc/?tab=doc#ClientConn.NewStream.
 type PaxosClient interface {
+	ClientCommand(ctx context.Context, in *CommandBody, opts ...grpc.CallOption) (*CommandResponse, error)
 	Prepare(ctx context.Context, in *PrepareBody, opts ...grpc.CallOption) (*PromiseBody, error)
 	Accept(ctx context.Context, in *AcceptBody, opts ...grpc.CallOption) (*AcceptedBody, error)
 }
@@ -28,6 +29,15 @@ type paxosClient struct {
 
 func NewPaxosClient(cc grpc.ClientConnInterface) PaxosClient {
 	return &paxosClient{cc}
+}
+
+func (c *paxosClient) ClientCommand(ctx context.Context, in *CommandBody, opts ...grpc.CallOption) (*CommandResponse, error) {
+	out := new(CommandResponse)
+	err := c.cc.Invoke(ctx, "/Paxos/ClientCommand", in, out, opts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
 }
 
 func (c *paxosClient) Prepare(ctx context.Context, in *PrepareBody, opts ...grpc.CallOption) (*PromiseBody, error) {
@@ -52,6 +62,7 @@ func (c *paxosClient) Accept(ctx context.Context, in *AcceptBody, opts ...grpc.C
 // All implementations must embed UnimplementedPaxosServer
 // for forward compatibility
 type PaxosServer interface {
+	ClientCommand(context.Context, *CommandBody) (*CommandResponse, error)
 	Prepare(context.Context, *PrepareBody) (*PromiseBody, error)
 	Accept(context.Context, *AcceptBody) (*AcceptedBody, error)
 	mustEmbedUnimplementedPaxosServer()
@@ -61,6 +72,9 @@ type PaxosServer interface {
 type UnimplementedPaxosServer struct {
 }
 
+func (UnimplementedPaxosServer) ClientCommand(context.Context, *CommandBody) (*CommandResponse, error) {
+	return nil, status.Errorf(codes.Unimplemented, "method ClientCommand not implemented")
+}
 func (UnimplementedPaxosServer) Prepare(context.Context, *PrepareBody) (*PromiseBody, error) {
 	return nil, status.Errorf(codes.Unimplemented, "method Prepare not implemented")
 }
@@ -78,6 +92,24 @@ type UnsafePaxosServer interface {
 
 func RegisterPaxosServer(s grpc.ServiceRegistrar, srv PaxosServer) {
 	s.RegisterService(&Paxos_ServiceDesc, srv)
+}
+
+func _Paxos_ClientCommand_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(CommandBody)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(PaxosServer).ClientCommand(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: "/Paxos/ClientCommand",
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(PaxosServer).ClientCommand(ctx, req.(*CommandBody))
+	}
+	return interceptor(ctx, in, info, handler)
 }
 
 func _Paxos_Prepare_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
@@ -123,6 +155,10 @@ var Paxos_ServiceDesc = grpc.ServiceDesc{
 	ServiceName: "Paxos",
 	HandlerType: (*PaxosServer)(nil),
 	Methods: []grpc.MethodDesc{
+		{
+			MethodName: "ClientCommand",
+			Handler:    _Paxos_ClientCommand_Handler,
+		},
 		{
 			MethodName: "Prepare",
 			Handler:    _Paxos_Prepare_Handler,
