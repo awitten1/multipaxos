@@ -10,8 +10,10 @@ import (
 )
 
 var (
-	Peers []ServerAddress = make([]ServerAddress, 0)
-	Port  int32
+	Peers   []ServerAddress = make([]ServerAddress, 0)
+	Port    int32
+	Replica int8
+	DBPath  string
 )
 
 type ServerAddress struct {
