@@ -41,11 +41,39 @@ func SetupDB() (*PaxosState, error) {
 	return &PaxosState{db: db}, nil
 }
 
+// Compute all gaps in log and send a prepare message for each entry
+func (state *PaxosState) CreatePrepareMapRequest() ([]uint64, uint64, error) {
+	sqlStmt := `SELECT (logIndex, decree) FROM acceptedLogs ORDER BY logIndex ASC`
+	rows, err := State.db.Query(sqlStmt)
+	var lastSeen uint64 = 0
+	ret := make([]uint64, 0)
+
+	if err != nil {
+		return nil, 0, err
+	}
+	defer rows.Close()
+	for rows.Next() {
+		var currIdx uint64
+		var decree string
+		if err = rows.Scan(&currIdx, &decree); err != nil {
+			return nil, 0, err
+		}
+		for i := lastSeen + 1; i < currIdx; i++ {
+			ret = append(ret, i)
+		}
+		lastSeen = currIdx
+	}
+	return ret, lastSeen + 1, nil
+}
+
 // Create a table to persist all necessary information
+// highestVotedForDecree: In response to a prepare(n) message
+//           return a map m: logIndex --> highestVotedForDecree
+//           for all rows with ballotNumOfHighestVotedForDecree < n
+// ballotNumOfHighestVotedForDecree: ballot num corresponding to highestVotedForDecree
 func createPaxosInfoTable(db *sql.DB) error {
 	sqlStmt := `CREATE TABLE IF NOT EXISTS paxosInfo(
-					logIndex INT NOT NULL PRIMARY KEY, 
-					nextBallot INT, 
+					logIndex UNSIGNED BIG INT NOT NULL PRIMARY KEY, 
 					highestVotedForDecree VARCHAR(100), 
 					ballotNumOfHighestVotedForDecree INT
 				)`
@@ -59,7 +87,7 @@ func createPaxosInfoTable(db *sql.DB) error {
 // Create a table to persist all accepted logs
 func createAcceptedLogTable(db *sql.DB) error {
 	sqlStmt := `CREATE TABLE IF NOT EXISTS acceptedLogs(
-					logIndex INT NOT NULL PRIMARY KEY, 
+					logIndex UNSIGNED BIG INT NOT NULL PRIMARY KEY, 
 					decree VARCHAR(100) NOT NULL
 				)`
 	_, err := db.Exec(sqlStmt)

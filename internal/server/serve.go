@@ -10,10 +10,11 @@ import (
 )
 
 var (
-	Peers   []ServerAddress = make([]ServerAddress, 0)
-	Port    int32
-	Replica int8
-	DBPath  string
+	Peers      []string
+	Port       int32
+	Replica    int8
+	DBPath     string
+	NextBallot uint64 = 0
 )
 
 type ServerAddress struct {
@@ -30,5 +31,6 @@ func StartServer() {
 	var opts []grpc.ServerOption
 	grpcServer := grpc.NewServer(opts...)
 	rpc.RegisterPaxosServer(grpcServer, &PaxosServerImpl{})
+	go func() { EstablishConnections() }()
 	grpcServer.Serve(lis)
 }

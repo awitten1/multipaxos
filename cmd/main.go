@@ -4,8 +4,6 @@ import (
 	"flag"
 	"fmt"
 	"log"
-	"net"
-	"strconv"
 	"strings"
 
 	db "github.com/awitten1/multipaxos/internal/db"
@@ -50,21 +48,7 @@ func parseCliArgs() error {
 	if db.DBPath == "" {
 		return fmt.Errorf("must provide a db directory")
 	}
-
-	for _, peer := range strings.Split(peers, ",") {
-		addr, portString, err := net.SplitHostPort(peer)
-		if err != nil {
-			return err
-		}
-		port, err = strconv.Atoi(portString)
-		if err != nil {
-			return err
-		}
-		server.Peers = append(server.Peers, server.ServerAddress{
-			Address: addr,
-			Port:    int32(port),
-		})
-	}
+	server.Peers = strings.Split(peers, ",")
 
 	return nil
 }

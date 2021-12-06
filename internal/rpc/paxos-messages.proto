@@ -10,11 +10,12 @@ service Paxos {
 }
 
 message PrepareBody {
-    map<uint64, uint64> ballotNumber = 1;
+    repeated uint64 logIndexes  = 1;
+    uint64 inifinitePrepareBeginning = 2;
 }
 
 message PromiseBody {
-    map<int64, string> decrees = 1;
+    map<uint64, string> decrees = 1;
 }
 
 message AcceptBody {
@@ -32,5 +33,10 @@ message CommandBody {
 
 message CommandResponse {
     bool committed = 1;
+}
+
+message Learn {
+    string decree = 1;
+    uint64 logIndex = 2;
 }
 
