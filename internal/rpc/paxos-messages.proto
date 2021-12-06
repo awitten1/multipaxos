@@ -7,11 +7,11 @@ service Paxos {
     rpc ClientCommand(CommandBody) returns (CommandResponse);
     rpc Prepare(PrepareBody) returns (PromiseBody);
     rpc Accept(AcceptBody) returns (AcceptedBody);
+    rpc Learn(LearnBody) returns (LearnAck);
 }
 
 message PrepareBody {
-    repeated uint64 logIndexes  = 1;
-    uint64 inifinitePrepareBeginning = 2;
+    uint64 smallestUndecidedIndex = 1;
 }
 
 message PromiseBody {
@@ -21,10 +21,12 @@ message PromiseBody {
 message AcceptBody {
     uint64 ballotNumber = 1;
     string decree = 2;
+    uint64 logIndex = 3;
 }
 
 message AcceptedBody {
     bool accepted = 1;
+    string message = 2;
 }
 
 message CommandBody {
@@ -33,10 +35,15 @@ message CommandBody {
 
 message CommandResponse {
     bool committed = 1;
+    string errorMessage = 2;
 }
 
-message Learn {
+message LearnBody {
     string decree = 1;
     uint64 logIndex = 2;
+}
+
+message LearnAck {
+    bool acked = 1;
 }
 

@@ -21,6 +21,7 @@ type PaxosClient interface {
 	ClientCommand(ctx context.Context, in *CommandBody, opts ...grpc.CallOption) (*CommandResponse, error)
 	Prepare(ctx context.Context, in *PrepareBody, opts ...grpc.CallOption) (*PromiseBody, error)
 	Accept(ctx context.Context, in *AcceptBody, opts ...grpc.CallOption) (*AcceptedBody, error)
+	Learn(ctx context.Context, in *LearnBody, opts ...grpc.CallOption) (*LearnAck, error)
 }
 
 type paxosClient struct {
@@ -58,6 +59,15 @@ func (c *paxosClient) Accept(ctx context.Context, in *AcceptBody, opts ...grpc.C
 	return out, nil
 }
 
+func (c *paxosClient) Learn(ctx context.Context, in *LearnBody, opts ...grpc.CallOption) (*LearnAck, error) {
+	out := new(LearnAck)
+	err := c.cc.Invoke(ctx, "/Paxos/Learn", in, out, opts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
 // PaxosServer is the server API for Paxos service.
 // All implementations must embed UnimplementedPaxosServer
 // for forward compatibility
@@ -65,6 +75,7 @@ type PaxosServer interface {
 	ClientCommand(context.Context, *CommandBody) (*CommandResponse, error)
 	Prepare(context.Context, *PrepareBody) (*PromiseBody, error)
 	Accept(context.Context, *AcceptBody) (*AcceptedBody, error)
+	Learn(context.Context, *LearnBody) (*LearnAck, error)
 	mustEmbedUnimplementedPaxosServer()
 }
 
@@ -80,6 +91,9 @@ func (UnimplementedPaxosServer) Prepare(context.Context, *PrepareBody) (*Promise
 }
 func (UnimplementedPaxosServer) Accept(context.Context, *AcceptBody) (*AcceptedBody, error) {
 	return nil, status.Errorf(codes.Unimplemented, "method Accept not implemented")
+}
+func (UnimplementedPaxosServer) Learn(context.Context, *LearnBody) (*LearnAck, error) {
+	return nil, status.Errorf(codes.Unimplemented, "method Learn not implemented")
 }
 func (UnimplementedPaxosServer) mustEmbedUnimplementedPaxosServer() {}
 
@@ -148,6 +162,24 @@ func _Paxos_Accept_Handler(srv interface{}, ctx context.Context, dec func(interf
 	return interceptor(ctx, in, info, handler)
 }
 
+func _Paxos_Learn_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(LearnBody)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(PaxosServer).Learn(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: "/Paxos/Learn",
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(PaxosServer).Learn(ctx, req.(*LearnBody))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
 // Paxos_ServiceDesc is the grpc.ServiceDesc for Paxos service.
 // It's only intended for direct use with grpc.RegisterService,
 // and not to be introspected or modified (even as a copy)
@@ -166,6 +198,10 @@ var Paxos_ServiceDesc = grpc.ServiceDesc{
 		{
 			MethodName: "Accept",
 			Handler:    _Paxos_Accept_Handler,
+		},
+		{
+			MethodName: "Learn",
+			Handler:    _Paxos_Learn_Handler,
 		},
 	},
 	Streams:  []grpc.StreamDesc{},

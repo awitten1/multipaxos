@@ -15,7 +15,7 @@ func main() {
 	if err != nil {
 		panic(err)
 	}
-	db.State, err = db.SetupDB()
+	db.State, err = db.SetupDB(uint8(server.Replica))
 	if err != nil {
 		panic(err)
 	}
@@ -32,6 +32,7 @@ func parseCliArgs() error {
 	flag.IntVar(&port, "port", -1, "Port number to listen on")
 	flag.IntVar(&replicaId, "replica", -1, "Replica ID number (must be unique)")
 	flag.StringVar(&db.DBPath, "dbpath", "", "Directory to persist to")
+	flag.BoolVar(&server.Leader, "leader", false, "is the leader (this option will be removed)")
 
 	flag.Parse()
 	if peers == "" {
@@ -42,13 +43,14 @@ func parseCliArgs() error {
 	}
 	server.Port = int32(port)
 	if replicaId < 0 || replicaId >= 256 {
-		return fmt.Errorf("Replica Id must be a positive, 8-bit integer")
+		return fmt.Errorf("replica Id must be a positive, 8-bit integer")
 	}
 	server.Replica = int8(replicaId)
 	if db.DBPath == "" {
 		return fmt.Errorf("must provide a db directory")
 	}
 	server.Peers = strings.Split(peers, ",")
-
+	server.N = uint32(len(server.Peers)) + 1
+	server.NextBallot = uint64(server.Replica)
 	return nil
 }

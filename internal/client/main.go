@@ -25,13 +25,13 @@ func main() {
 	defer conn.Close()
 	c := rpc.NewPaxosClient(conn)
 
-	ctx, cancel := context.WithTimeout(context.Background(), time.Second)
+	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
 	defer cancel()
 	resp, err := c.ClientCommand(ctx, &rpc.CommandBody{Decree: command})
 	if err != nil {
 		log.Fatalf("command failed: %v", err)
 	}
-	log.Printf("Command success status: %t", resp.Committed)
+	log.Printf("Command success status: %t, error message (empty on success): %s", resp.Committed, resp.ErrorMessage)
 }
 
 func parseCliArgs() {
