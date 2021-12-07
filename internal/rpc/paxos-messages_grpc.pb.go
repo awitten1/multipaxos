@@ -22,6 +22,7 @@ type PaxosClient interface {
 	Prepare(ctx context.Context, in *PrepareBody, opts ...grpc.CallOption) (*PromiseBody, error)
 	Accept(ctx context.Context, in *AcceptBody, opts ...grpc.CallOption) (*AcceptedBody, error)
 	Learn(ctx context.Context, in *LearnBody, opts ...grpc.CallOption) (*LearnAck, error)
+	GetLog(ctx context.Context, in *GetLogBody, opts ...grpc.CallOption) (*Log, error)
 }
 
 type paxosClient struct {
@@ -68,6 +69,15 @@ func (c *paxosClient) Learn(ctx context.Context, in *LearnBody, opts ...grpc.Cal
 	return out, nil
 }
 
+func (c *paxosClient) GetLog(ctx context.Context, in *GetLogBody, opts ...grpc.CallOption) (*Log, error) {
+	out := new(Log)
+	err := c.cc.Invoke(ctx, "/Paxos/GetLog", in, out, opts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
 // PaxosServer is the server API for Paxos service.
 // All implementations must embed UnimplementedPaxosServer
 // for forward compatibility
@@ -76,6 +86,7 @@ type PaxosServer interface {
 	Prepare(context.Context, *PrepareBody) (*PromiseBody, error)
 	Accept(context.Context, *AcceptBody) (*AcceptedBody, error)
 	Learn(context.Context, *LearnBody) (*LearnAck, error)
+	GetLog(context.Context, *GetLogBody) (*Log, error)
 	mustEmbedUnimplementedPaxosServer()
 }
 
@@ -94,6 +105,9 @@ func (UnimplementedPaxosServer) Accept(context.Context, *AcceptBody) (*AcceptedB
 }
 func (UnimplementedPaxosServer) Learn(context.Context, *LearnBody) (*LearnAck, error) {
 	return nil, status.Errorf(codes.Unimplemented, "method Learn not implemented")
+}
+func (UnimplementedPaxosServer) GetLog(context.Context, *GetLogBody) (*Log, error) {
+	return nil, status.Errorf(codes.Unimplemented, "method GetLog not implemented")
 }
 func (UnimplementedPaxosServer) mustEmbedUnimplementedPaxosServer() {}
 
@@ -180,6 +194,24 @@ func _Paxos_Learn_Handler(srv interface{}, ctx context.Context, dec func(interfa
 	return interceptor(ctx, in, info, handler)
 }
 
+func _Paxos_GetLog_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(GetLogBody)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(PaxosServer).GetLog(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: "/Paxos/GetLog",
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(PaxosServer).GetLog(ctx, req.(*GetLogBody))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
 // Paxos_ServiceDesc is the grpc.ServiceDesc for Paxos service.
 // It's only intended for direct use with grpc.RegisterService,
 // and not to be introspected or modified (even as a copy)
@@ -202,6 +234,10 @@ var Paxos_ServiceDesc = grpc.ServiceDesc{
 		{
 			MethodName: "Learn",
 			Handler:    _Paxos_Learn_Handler,
+		},
+		{
+			MethodName: "GetLog",
+			Handler:    _Paxos_GetLog_Handler,
 		},
 	},
 	Streams:  []grpc.StreamDesc{},

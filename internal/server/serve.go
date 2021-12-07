@@ -6,10 +6,11 @@ import (
 	"net"
 	"time"
 
-	"github.com/awitten1/multipaxos/internal/db"
 	rpc "github.com/awitten1/multipaxos/internal/rpc"
 	"google.golang.org/grpc"
 )
+
+type State int
 
 var (
 	Peers   []string
@@ -17,16 +18,16 @@ var (
 	Replica int8
 	DBPath  string
 	// Only increment while sending Prepare messages
-	NextBallot   uint64
 	Leader       bool
 	NextLogIndex uint64 = 0
 	N            uint32
+	ServerState  State
 )
 
-type ServerAddress struct {
-	Address string
-	Port    int32
-}
+const (
+	LEADER State = iota
+	FOLLOWER
+)
 
 func StartServer() {
 	log.Printf("About to start server listening on port %d", Port)
@@ -38,13 +39,13 @@ func StartServer() {
 	grpcServer := grpc.NewServer(opts...)
 	rpc.RegisterPaxosServer(grpcServer, &PaxosServerImpl{})
 	go func() { EstablishConnections() }()
-	go func() { PrintLog() }()
+	//go func() { PrintLog() }()
 	grpcServer.Serve(lis)
 }
 
 func PrintLog() {
 	for {
 		time.Sleep(20 * time.Second)
-		db.State.PrintLog()
+		//db.DB.PrintLog()
 	}
 }

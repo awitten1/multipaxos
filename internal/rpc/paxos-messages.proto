@@ -8,14 +8,18 @@ service Paxos {
     rpc Prepare(PrepareBody) returns (PromiseBody);
     rpc Accept(AcceptBody) returns (AcceptedBody);
     rpc Learn(LearnBody) returns (LearnAck);
+    rpc GetLog(GetLogBody) returns (Log);
 }
 
 message PrepareBody {
     uint64 smallestUndecidedIndex = 1;
+    uint64 proposalNumber = 2;
 }
 
 message PromiseBody {
     map<uint64, string> decrees = 1;
+    map<uint64, uint64> correspondingBallotNum = 2;
+    bool ackedAsLeader = 3;
 }
 
 message AcceptBody {
@@ -46,4 +50,10 @@ message LearnBody {
 message LearnAck {
     bool acked = 1;
 }
+
+message Log {
+    repeated string entries = 1;
+}
+
+message GetLogBody {}
 

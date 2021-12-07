@@ -15,7 +15,7 @@ func main() {
 	if err != nil {
 		panic(err)
 	}
-	db.State, err = db.SetupDB(uint8(server.Replica))
+	db.DB, err = db.SetupDB(uint8(server.Replica))
 	if err != nil {
 		panic(err)
 	}
@@ -51,6 +51,5 @@ func parseCliArgs() error {
 	}
 	server.Peers = strings.Split(peers, ",")
 	server.N = uint32(len(server.Peers)) + 1
-	server.NextBallot = uint64(server.Replica)
 	return nil
 }

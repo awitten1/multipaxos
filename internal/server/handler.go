@@ -24,8 +24,9 @@ func broadcastAccepts(ctx context.Context, decree string, logIndex uint64) (uint
 		wg.Add(1)
 		go func() {
 			defer wg.Done()
+			newCtx, _ := context.WithTimeout(ctx, time.Second)
 
-			acceptedBody, err := c.Accept(ctx, &rpc.AcceptBody{BallotNumber: NextBallot, Decree: decree, LogIndex: logIndex})
+			acceptedBody, err := c.Accept(newCtx, &rpc.AcceptBody{BallotNumber: db.DB.GetBallotNumber(), Decree: decree, LogIndex: logIndex})
 			if err != nil || acceptedBody == nil {
 				log.Printf("Error sending Accept message: %s", err.Error())
 				return
@@ -39,20 +40,104 @@ func broadcastAccepts(ctx context.Context, decree string, logIndex uint64) (uint
 	return acks, nil
 }
 
-func broadcastLearns(decree string, logIndex uint64) {
+func broadcastLearns(ctx context.Context, decree string, logIndex uint64) {
 	for _, client := range Clients {
-		c := client
-		go func() {
+		go func(c rpc.PaxosClient) {
 			for {
-				acceptedBody, err := c.Learn(context.Background(), &rpc.LearnBody{LogIndex: logIndex, Decree: decree})
+				newCtx, _ := context.WithTimeout(ctx, 5*time.Second)
+				acceptedBody, err := c.Learn(newCtx, &rpc.LearnBody{LogIndex: logIndex, Decree: decree})
 				if err != nil || acceptedBody == nil {
-					log.Printf("error sending Learn message: %s", err.Error())
+					// log.Printf("error sending Learn message: %s", err.Error())
 					time.Sleep(10 * time.Second)
 					continue
 				}
 				break
 			}
+		}(client)
+	}
+}
+
+func broadcastPrepares(ctx context.Context) (map[uint64]string, error) {
+	nextBallot, err := db.DB.GetAndUpdateProposalNumber()
+	if err != nil {
+		log.Printf("Could not get and update proposal number: %s", err.Error())
+		return nil, err
+	}
+	nextBallot = nextBallot*10 + uint64(Replica) // Must be unique to this replica
+	log.Print("broadcasting prepare messages")
+	firstGap, err := db.DB.CreatePrepareRequest()
+	if err != nil {
+		log.Printf("Error building prepare message")
+		return nil, err
+	}
+	var acks uint32 = 1
+	var wg sync.WaitGroup
+	promiseMsgChan := make(chan *rpc.PromiseBody)
+	finalCmdsChan := make(chan map[uint64]string)
+	newCtx, cancel := context.WithCancel(ctx)
+	go func() {
+		buildAllowedCommands(newCtx, promiseMsgChan, finalCmdsChan)
+	}()
+
+	for _, client := range Clients {
+		c := client
+		go func() {
+			defer wg.Done()
+			newCtx, _ := context.WithTimeout(ctx, time.Second)
+
+			promiseBody, err := c.Prepare(newCtx, &rpc.PrepareBody{SmallestUndecidedIndex: firstGap, ProposalNumber: nextBallot})
+			if err != nil {
+				log.Printf("Error sending prepare: %s", err.Error())
+				return
+			}
+			if promiseBody == nil {
+				return
+			}
+			if promiseBody.AckedAsLeader {
+				atomic.AddUint32(&acks, 1)
+			}
+			promiseMsgChan <- promiseBody
 		}()
+	}
+	wg.Done()
+	localMap, err := db.DB.CreateCurrentReplicaPromiseMaps(firstGap)
+	if err != nil {
+		log.Printf("Could not build local map of previous paxos instance info: %s", err.Error())
+	} else {
+		promiseMsgChan <- localMap
+	}
+	cancel()
+	if acks < N/2+1 {
+		return nil, fmt.Errorf("Received %d acks in response to prepare messages", acks)
+	}
+	return <-finalCmdsChan, nil
+}
+
+func buildAllowedCommands(ctx context.Context, promiseBodies chan *rpc.PromiseBody, outputChannel chan map[uint64]string) {
+	ret := make(map[uint64]string) // The commands we are allowed to propose
+	correspondingProposals := make(map[uint64]uint64)
+	for {
+		select {
+		case promise := <-promiseBodies:
+			for idx, ballotNumOfHighestVotedForDec := range promise.CorrespondingBallotNum {
+				curr, ok := correspondingProposals[idx]
+				if !ok && ballotNumOfHighestVotedForDec > curr {
+					correspondingProposals[idx] = ballotNumOfHighestVotedForDec
+					ret[idx] = promise.Decrees[idx]
+				}
+			}
+		case <-ctx.Done():
+			outputChannel <- ret
+			return
+		}
+	}
+}
+
+func (s *PaxosServerImpl) GetLogDiagnosticCommand(ctx context.Context, _ *rpc.GetLogBody) (*rpc.Log, error) {
+	if ret, err := db.DB.GetLog(); err != nil {
+		return nil, err
+	} else {
+		return &rpc.Log{Entries: ret}, nil
 	}
 }
 
@@ -61,8 +146,9 @@ func (s *PaxosServerImpl) ClientCommand(ctx context.Context, commandBody *rpc.Co
 	if !Leader {
 		return &rpc.CommandResponse{Committed: false, ErrorMessage: "cannot commit message, not the leader"}, nil
 	}
+	// Get next log index to use
 	nextIndex := atomic.AddUint64(&NextLogIndex, 1)
-	db.State.UpsertPaxosLogState(nextIndex, commandBody.Decree, NextBallot)
+	db.DB.UpsertPaxosLogState(nextIndex, commandBody.Decree, db.DB.GetBallotNumber())
 	acks, err := broadcastAccepts(ctx, commandBody.Decree, nextIndex)
 	if err != nil {
 		return &rpc.CommandResponse{Committed: false, ErrorMessage: err.Error()}, err
@@ -72,27 +158,27 @@ func (s *PaxosServerImpl) ClientCommand(ctx context.Context, commandBody *rpc.Co
 		log.Printf("Returning failure to client")
 		return &rpc.CommandResponse{Committed: false, ErrorMessage: "Failed to replicate message: could not receive enough acks"}, nil
 	}
-	go func() { db.State.InsertAcceptedLog(nextIndex, commandBody.Decree) }()
-	broadcastLearns(commandBody.Decree, nextIndex)
+	go func() { db.DB.InsertAcceptedLog(nextIndex, commandBody.Decree) }()
+	log.Print("Broadcasting learns to all nodes")
+	broadcastLearns(ctx, commandBody.Decree, nextIndex)
 	return &rpc.CommandResponse{Committed: true, ErrorMessage: ""}, nil
 }
 
 func (s *PaxosServerImpl) Prepare(ctx context.Context, prepareBody *rpc.PrepareBody) (*rpc.PromiseBody, error) {
-	defer updateBallotNumber()
 	log.Printf("Received prepare message: %s", prepareBody.String())
 	lastVotes := make(map[uint64]string)
 	return &rpc.PromiseBody{Decrees: lastVotes}, nil
 }
 
 func (s *PaxosServerImpl) Learn(ctx context.Context, learnBody *rpc.LearnBody) (*rpc.LearnAck, error) {
-	db.State.InsertAcceptedLog(learnBody.LogIndex, learnBody.Decree)
+	db.DB.InsertAcceptedLog(learnBody.LogIndex, learnBody.Decree)
 	log.Printf("learning decree: %s in index: %d", learnBody.Decree, learnBody.LogIndex)
 	return &rpc.LearnAck{Acked: true}, nil
 }
 
 func (s *PaxosServerImpl) Accept(ctx context.Context, acceptBody *rpc.AcceptBody) (*rpc.AcceptedBody, error) {
 	log.Printf("Received accept message: %s", acceptBody.String())
-	paxosInstance, err := db.State.GetRowByLogIndex(acceptBody.LogIndex)
+	paxosInstance, err := db.DB.GetRowByLogIndex(acceptBody.LogIndex)
 	if err != nil {
 		s := fmt.Sprintf("error getting paxos instance information: %s", err.Error())
 		log.Print(s)
@@ -107,12 +193,7 @@ func (s *PaxosServerImpl) Accept(ctx context.Context, acceptBody *rpc.AcceptBody
 		return &rpc.AcceptedBody{Accepted: false, Message: s}, nil
 	}
 
-	db.State.UpsertPaxosLogState(logIndex, decree, ballotNum)
+	db.DB.UpsertPaxosLogState(logIndex, decree, ballotNum)
 
 	return &rpc.AcceptedBody{Accepted: true}, nil
-}
-
-func updateBallotNumber() uint64 {
-	NextBallot += 10
-	return NextBallot
 }

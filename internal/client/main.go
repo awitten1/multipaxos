@@ -4,6 +4,7 @@ import (
 	"context"
 	"flag"
 	"log"
+	"strings"
 	"time"
 
 	rpc "github.com/awitten1/multipaxos/internal/rpc"
@@ -13,11 +14,11 @@ import (
 var (
 	address string
 	command string
+	getLog  bool
 )
 
 func main() {
 	parseCliArgs()
-	log.Printf("parsed cli args successfully")
 	conn, err := grpc.Dial(address, grpc.WithInsecure(), grpc.WithBlock())
 	if err != nil {
 		log.Fatalf("did not connect: %v", err)
@@ -27,6 +28,12 @@ func main() {
 
 	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
 	defer cancel()
+	if getLog {
+		resp, _ := c.GetLog(ctx, &rpc.GetLogBody{})
+		log.Printf("Received log: %s", strings.Join(resp.Entries, ","))
+		return
+	}
+
 	resp, err := c.ClientCommand(ctx, &rpc.CommandBody{Decree: command})
 	if err != nil {
 		log.Fatalf("command failed: %v", err)
@@ -37,11 +44,15 @@ func main() {
 func parseCliArgs() {
 	flag.StringVar(&address, "server", "", "server to send command to")
 	flag.StringVar(&command, "cmd", "", "command to send to server")
+	flag.BoolVar(&getLog, "getlog", false, "query log from server (mutually exclusive with cmd)")
 	flag.Parse()
 	if address == "" {
 		panic("must provide server address")
 	}
-	if command == "" {
+	if command == "" && !getLog {
 		panic("must provide command")
+	}
+	if getLog && command != "" {
+		panic("getlog is mutually exclusive with cmd")
 	}
 }
