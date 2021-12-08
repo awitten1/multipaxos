@@ -9,6 +9,7 @@ service Paxos {
     rpc Accept(AcceptBody) returns (AcceptedBody);
     rpc Learn(LearnBody) returns (LearnAck);
     rpc GetLog(GetLogBody) returns (Log);
+    rpc Heartbeat(HeartbeatBody) returns (HeartbeatAck);
 }
 
 message PrepareBody {
@@ -57,3 +58,8 @@ message Log {
 
 message GetLogBody {}
 
+message HeartbeatBody {
+    uint32 replicaNum = 1;
+}
+
+message HeartbeatAck {}

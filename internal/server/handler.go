@@ -9,6 +9,7 @@ import (
 	"time"
 
 	"github.com/awitten1/multipaxos/internal/db"
+	"github.com/awitten1/multipaxos/internal/leader"
 	"github.com/awitten1/multipaxos/internal/rpc"
 )
 
@@ -43,15 +44,10 @@ func broadcastAccepts(ctx context.Context, decree string, logIndex uint64) (uint
 func broadcastLearns(ctx context.Context, decree string, logIndex uint64) {
 	for _, client := range Clients {
 		go func(c rpc.PaxosClient) {
-			for {
-				newCtx, _ := context.WithTimeout(ctx, 5*time.Second)
-				acceptedBody, err := c.Learn(newCtx, &rpc.LearnBody{LogIndex: logIndex, Decree: decree})
-				if err != nil || acceptedBody == nil {
-					// log.Printf("error sending Learn message: %s", err.Error())
-					time.Sleep(10 * time.Second)
-					continue
-				}
-				break
+			newCtx, _ := context.WithTimeout(context.Background(), 2*time.Second)
+			_, err := c.Learn(newCtx, &rpc.LearnBody{LogIndex: logIndex, Decree: decree})
+			if err != nil {
+				log.Printf("error sending Learn message: %s", err.Error())
 			}
 		}(client)
 	}
@@ -108,7 +104,7 @@ func broadcastPrepares(ctx context.Context) (map[uint64]string, error) {
 	}
 	cancel()
 	if acks < N/2+1 {
-		return nil, fmt.Errorf("Received %d acks in response to prepare messages", acks)
+		return nil, fmt.Errorf("received %d acks in response to prepare messages", acks)
 	}
 	return <-finalCmdsChan, nil
 }
@@ -133,7 +129,16 @@ func buildAllowedCommands(ctx context.Context, promiseBodies chan *rpc.PromiseBo
 	}
 }
 
-func (s *PaxosServerImpl) GetLogDiagnosticCommand(ctx context.Context, _ *rpc.GetLogBody) (*rpc.Log, error) {
+func broadcastHeartbeat(ctx context.Context) {
+	for _, client := range Clients {
+		go func(c rpc.PaxosClient) {
+			newCtx, _ := context.WithTimeout(ctx, 700*time.Millisecond)
+			c.Heartbeat(newCtx, &rpc.HeartbeatBody{ReplicaNum: uint32(Replica)})
+		}(client)
+	}
+}
+
+func (s *PaxosServerImpl) GetLog(ctx context.Context, _ *rpc.GetLogBody) (*rpc.Log, error) {
 	if ret, err := db.DB.GetLog(); err != nil {
 		return nil, err
 	} else {
@@ -143,7 +148,7 @@ func (s *PaxosServerImpl) GetLogDiagnosticCommand(ctx context.Context, _ *rpc.Ge
 
 func (s *PaxosServerImpl) ClientCommand(ctx context.Context, commandBody *rpc.CommandBody) (*rpc.CommandResponse, error) {
 	log.Printf("Received new decree from client: %s", commandBody.Decree)
-	if !Leader {
+	if !leader.AmILeader() {
 		return &rpc.CommandResponse{Committed: false, ErrorMessage: "cannot commit message, not the leader"}, nil
 	}
 	// Get next log index to use
@@ -176,6 +181,11 @@ func (s *PaxosServerImpl) Learn(ctx context.Context, learnBody *rpc.LearnBody) (
 	return &rpc.LearnAck{Acked: true}, nil
 }
 
+func (s *PaxosServerImpl) Heartbeat(ctx context.Context, heartbeat *rpc.HeartbeatBody) (*rpc.HeartbeatAck, error) {
+	leader.SignalHeartbeatRecv(heartbeat.ReplicaNum)
+	return &rpc.HeartbeatAck{}, nil
+}
+
 func (s *PaxosServerImpl) Accept(ctx context.Context, acceptBody *rpc.AcceptBody) (*rpc.AcceptedBody, error) {
 	log.Printf("Received accept message: %s", acceptBody.String())
 	paxosInstance, err := db.DB.GetRowByLogIndex(acceptBody.LogIndex)
@@ -196,4 +206,40 @@ func (s *PaxosServerImpl) Accept(ctx context.Context, acceptBody *rpc.AcceptBody
 	db.DB.UpsertPaxosLogState(logIndex, decree, ballotNum)
 
 	return &rpc.AcceptedBody{Accepted: true}, nil
+}
+
+func MonitorHeartbeats(ctx context.Context, replica uint32) {
+	timer := time.NewTimer(leader.GetNextTimeout() * time.Millisecond)
+	var cancel context.CancelFunc = func() {}
+	for {
+		select {
+		case replicaNum := <-leader.GetHeartbeatChan():
+			if replicaNum < replica {
+				cancel()           // If we are sending heartbeats, stop doing that.
+				cancel = func() {} // set cancel to do nothing (we aren't sending heartbeats)
+				leader.BecomeFollower()
+				timer.Reset(leader.GetNextTimeout() * time.Millisecond)
+			}
+
+		case <-timer.C:
+			newCtx, c := context.WithCancel(ctx)
+			cancel = c
+			leader.BecomeLeader()
+			go func() { SendHeartbeats(newCtx) }()
+			//timer.Reset(leader.GetNextTimeout() * time.Millisecond)
+		}
+	}
+}
+
+func SendHeartbeats(ctx context.Context) {
+	timer := time.NewTicker(500 * time.Millisecond)
+	for {
+		select {
+		case <-timer.C:
+			broadcastHeartbeat(ctx)
+		case <-ctx.Done():
+			log.Printf("Stop sending heartbeats because we saw a heartbeat from a lower replica")
+			return
+		}
+	}
 }

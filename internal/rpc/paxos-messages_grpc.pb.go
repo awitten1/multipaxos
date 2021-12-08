@@ -23,6 +23,7 @@ type PaxosClient interface {
 	Accept(ctx context.Context, in *AcceptBody, opts ...grpc.CallOption) (*AcceptedBody, error)
 	Learn(ctx context.Context, in *LearnBody, opts ...grpc.CallOption) (*LearnAck, error)
 	GetLog(ctx context.Context, in *GetLogBody, opts ...grpc.CallOption) (*Log, error)
+	Heartbeat(ctx context.Context, in *HeartbeatBody, opts ...grpc.CallOption) (*HeartbeatAck, error)
 }
 
 type paxosClient struct {
@@ -78,6 +79,15 @@ func (c *paxosClient) GetLog(ctx context.Context, in *GetLogBody, opts ...grpc.C
 	return out, nil
 }
 
+func (c *paxosClient) Heartbeat(ctx context.Context, in *HeartbeatBody, opts ...grpc.CallOption) (*HeartbeatAck, error) {
+	out := new(HeartbeatAck)
+	err := c.cc.Invoke(ctx, "/Paxos/Heartbeat", in, out, opts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
 // PaxosServer is the server API for Paxos service.
 // All implementations must embed UnimplementedPaxosServer
 // for forward compatibility
@@ -87,6 +97,7 @@ type PaxosServer interface {
 	Accept(context.Context, *AcceptBody) (*AcceptedBody, error)
 	Learn(context.Context, *LearnBody) (*LearnAck, error)
 	GetLog(context.Context, *GetLogBody) (*Log, error)
+	Heartbeat(context.Context, *HeartbeatBody) (*HeartbeatAck, error)
 	mustEmbedUnimplementedPaxosServer()
 }
 
@@ -108,6 +119,9 @@ func (UnimplementedPaxosServer) Learn(context.Context, *LearnBody) (*LearnAck, e
 }
 func (UnimplementedPaxosServer) GetLog(context.Context, *GetLogBody) (*Log, error) {
 	return nil, status.Errorf(codes.Unimplemented, "method GetLog not implemented")
+}
+func (UnimplementedPaxosServer) Heartbeat(context.Context, *HeartbeatBody) (*HeartbeatAck, error) {
+	return nil, status.Errorf(codes.Unimplemented, "method Heartbeat not implemented")
 }
 func (UnimplementedPaxosServer) mustEmbedUnimplementedPaxosServer() {}
 
@@ -212,6 +226,24 @@ func _Paxos_GetLog_Handler(srv interface{}, ctx context.Context, dec func(interf
 	return interceptor(ctx, in, info, handler)
 }
 
+func _Paxos_Heartbeat_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(HeartbeatBody)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(PaxosServer).Heartbeat(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: "/Paxos/Heartbeat",
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(PaxosServer).Heartbeat(ctx, req.(*HeartbeatBody))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
 // Paxos_ServiceDesc is the grpc.ServiceDesc for Paxos service.
 // It's only intended for direct use with grpc.RegisterService,
 // and not to be introspected or modified (even as a copy)
@@ -238,6 +270,10 @@ var Paxos_ServiceDesc = grpc.ServiceDesc{
 		{
 			MethodName: "GetLog",
 			Handler:    _Paxos_GetLog_Handler,
+		},
+		{
+			MethodName: "Heartbeat",
+			Handler:    _Paxos_Heartbeat_Handler,
 		},
 	},
 	Streams:  []grpc.StreamDesc{},

@@ -12,16 +12,27 @@ import (
 )
 
 var (
-	address string
+	servers []string
 	command string
 	getLog  bool
 )
 
 func main() {
 	parseCliArgs()
-	conn, err := grpc.Dial(address, grpc.WithInsecure(), grpc.WithBlock())
+	for _, address := range servers {
+		if err := sendCommand(address); err != nil {
+			log.Printf("failed sending command to %s because of: %s", address, err.Error())
+		} else {
+			break
+		}
+	}
+}
+
+func sendCommand(address string) error {
+	ctx, _ := context.WithTimeout(context.Background(), 2*time.Second)
+	conn, err := grpc.DialContext(ctx, address, grpc.WithInsecure(), grpc.WithBlock())
 	if err != nil {
-		log.Fatalf("did not connect: %v", err)
+		return err
 	}
 	defer conn.Close()
 	c := rpc.NewPaxosClient(conn)
@@ -29,26 +40,28 @@ func main() {
 	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
 	defer cancel()
 	if getLog {
-		resp, _ := c.GetLog(ctx, &rpc.GetLogBody{})
+		resp, err := c.GetLog(ctx, &rpc.GetLogBody{})
+		if err != nil {
+			return err
+		}
 		log.Printf("Received log: %s", strings.Join(resp.Entries, ","))
-		return
+		return nil
 	}
 
-	resp, err := c.ClientCommand(ctx, &rpc.CommandBody{Decree: command})
-	if err != nil {
-		log.Fatalf("command failed: %v", err)
-	}
-	log.Printf("Command success status: %t, error message (empty on success): %s", resp.Committed, resp.ErrorMessage)
+	_, err = c.ClientCommand(ctx, &rpc.CommandBody{Decree: command})
+	return err
 }
 
 func parseCliArgs() {
-	flag.StringVar(&address, "server", "", "server to send command to")
+	var s string
+	flag.StringVar(&s, "servers", "", "comma separated list of servers")
 	flag.StringVar(&command, "cmd", "", "command to send to server")
 	flag.BoolVar(&getLog, "getlog", false, "query log from server (mutually exclusive with cmd)")
 	flag.Parse()
-	if address == "" {
-		panic("must provide server address")
+	if s == "" {
+		panic("must provide server addresses")
 	}
+	servers = strings.Split(s, ",")
 	if command == "" && !getLog {
 		panic("must provide command")
 	}

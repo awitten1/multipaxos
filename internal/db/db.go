@@ -80,6 +80,30 @@ func (s *PaxosState) InsertAcceptedLog(logIndex uint64, decree string) {
 	}
 }
 
+func (s *PaxosState) PrintPaxosInfo() {
+	sqlStmt := `SELECT * FROM paxosInfo ORDER BY logIndex ASC`
+	rows, err := s.db.Query(sqlStmt)
+	if err != nil {
+		log.Printf("Could not print paxos info: %s", err.Error())
+		return
+	}
+	defer rows.Close()
+	var prev uint64 = 0
+	output := make([]string, 0)
+	for rows.Next() {
+		var currIdx uint64
+		var dec string
+		var ballotNumOfHighestVotedForDec uint64
+		rows.Scan(&currIdx, &dec, &ballotNumOfHighestVotedForDec)
+		for i := prev; i < currIdx-1; i++ {
+			output = append(output, "---")
+		}
+		output = append(output, fmt.Sprintf("(%s,%d)", dec, ballotNumOfHighestVotedForDec))
+		prev = currIdx
+	}
+	fmt.Print(strings.Join(output, ","))
+}
+
 type AcceptedLog struct {
 	Index  uint64
 	Decree string

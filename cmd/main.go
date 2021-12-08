@@ -7,11 +7,13 @@ import (
 	"strings"
 
 	db "github.com/awitten1/multipaxos/internal/db"
+	"github.com/awitten1/multipaxos/internal/leader"
 	"github.com/awitten1/multipaxos/internal/server"
 )
 
 func main() {
-	err := parseCliArgs()
+	port, err := parseCliArgs()
+	leader.BecomeFollower()
 	if err != nil {
 		panic(err)
 	}
@@ -20,10 +22,10 @@ func main() {
 		panic(err)
 	}
 	log.Printf("Starting server")
-	server.StartServer()
+	server.StartServer(port)
 }
 
-func parseCliArgs() error {
+func parseCliArgs() (int, error) {
 	var peers string
 	var port int
 	var replicaId int
@@ -32,24 +34,23 @@ func parseCliArgs() error {
 	flag.IntVar(&port, "port", -1, "Port number to listen on")
 	flag.IntVar(&replicaId, "replica", -1, "Replica ID number (must be unique)")
 	flag.StringVar(&db.DBPath, "dbpath", "", "Directory to persist to")
-	flag.BoolVar(&server.Leader, "leader", false, "is the leader (this option will be removed)")
+	//flag.BoolVar(&server.Leader, "leader", false, "is the leader (this option will be removed)")
 
 	flag.Parse()
 	if peers == "" {
-		return fmt.Errorf("must provide list of peers")
+		return 0, fmt.Errorf("must provide list of peers")
 	}
 	if port < 0 {
-		return fmt.Errorf("must provide valid port number")
+		return 0, fmt.Errorf("must provide valid port number")
 	}
-	server.Port = int32(port)
 	if replicaId < 0 || replicaId >= 256 {
-		return fmt.Errorf("replica Id must be a positive, 8-bit integer")
+		return 0, fmt.Errorf("replica Id must be a positive, 8-bit integer")
 	}
 	server.Replica = int8(replicaId)
 	if db.DBPath == "" {
-		return fmt.Errorf("must provide a db directory")
+		return 0, fmt.Errorf("must provide a db directory")
 	}
 	server.Peers = strings.Split(peers, ",")
 	server.N = uint32(len(server.Peers)) + 1
-	return nil
+	return port, nil
 }
