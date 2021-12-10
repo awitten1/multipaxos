@@ -29,7 +29,7 @@ func main() {
 }
 
 func sendCommand(address string) error {
-	ctx, _ := context.WithTimeout(context.Background(), 2*time.Second)
+	ctx, _ := context.WithTimeout(context.Background(), time.Second)
 	conn, err := grpc.DialContext(ctx, address, grpc.WithInsecure(), grpc.WithBlock())
 	if err != nil {
 		return err
@@ -44,12 +44,22 @@ func sendCommand(address string) error {
 		if err != nil {
 			return err
 		}
-		log.Printf("Received log: %s", strings.Join(resp.Entries, ","))
+		log.Printf("Success.  Addr: %s, Received log: %s", address, strings.Join(resp.Entries, ","))
 		return nil
 	}
 
-	_, err = c.ClientCommand(ctx, &rpc.CommandBody{Decree: command})
-	return err
+	resp, err := c.ClientCommand(ctx, &rpc.CommandBody{Decree: command})
+	if err != nil {
+		log.Printf("failed to send command to %s because of %s", address, err.Error())
+		return err
+	}
+	if !resp.Committed {
+		log.Printf("failed to commit command, addr: %s", address)
+
+	} else {
+		log.Printf("successfully commited command, addr: %s", address)
+	}
+	return nil
 }
 
 func parseCliArgs() {

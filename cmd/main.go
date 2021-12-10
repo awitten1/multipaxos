@@ -12,6 +12,8 @@ import (
 )
 
 func main() {
+	log.SetFlags(log.LstdFlags | log.Lshortfile)
+
 	port, err := parseCliArgs()
 	leader.BecomeFollower()
 	if err != nil {

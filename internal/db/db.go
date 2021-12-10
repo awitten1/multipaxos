@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"log"
 	"strings"
+	"sync"
 	"sync/atomic"
 
 	"github.com/awitten1/multipaxos/internal/rpc"
@@ -19,6 +20,7 @@ var (
 type PaxosState struct {
 	db         *sql.DB
 	nextBallot uint64
+	mu         sync.RWMutex
 }
 
 type PaxosInstanceState struct {
@@ -27,7 +29,10 @@ type PaxosInstanceState struct {
 	BallotNumOfHighestVotedForDecree uint64
 }
 
+// Get the accepted log entries (could have gaps)
 func (s *PaxosState) GetLog() ([]string, error) {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
 	sqlStmt := `SELECT *
 				FROM acceptedLogs
 				ORDER BY logIndex ASC`
@@ -53,12 +58,16 @@ func (s *PaxosState) GetLog() ([]string, error) {
 	return logEntries, nil
 }
 
-func (s *PaxosState) GetRowByLogIndex(logIndex uint64) (*PaxosInstanceState, error) {
-	sqlStmt := `SELECT logIndex, highestVotedForDecree, ballotNumOfHighestVotedForDecree
+// Get information on a paxos instance
+func (s *PaxosState) PaxosInstanceState(logIndex uint64) (*PaxosInstanceState, error) {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	sqlStmt := `SELECT logIndex, decree, ballotNum
 				FROM paxosInfo
 				WHERE logIndex=?`
 	rows, err := s.db.Query(sqlStmt, logIndex)
 	if err != nil {
+		log.Printf("Failure getting paxos instance info: %s", err.Error())
 		return nil, err
 	}
 	defer rows.Close()
@@ -72,15 +81,21 @@ func (s *PaxosState) GetRowByLogIndex(logIndex uint64) (*PaxosInstanceState, err
 	return &paxosInstance, nil
 }
 
-func (s *PaxosState) InsertAcceptedLog(logIndex uint64, decree string) {
+// Insert a new accepted log entry into the accepted logs table
+func (s *PaxosState) InsertAcceptedLog(entry *AcceptedLog) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
 	sqlStmt := `INSERT INTO acceptedLogs(logIndex, decree) VALUES(?,?)`
-	_, err := s.db.Exec(sqlStmt, logIndex, decree)
+	_, err := s.db.Exec(sqlStmt, entry.Index, entry.Decree)
 	if err != nil {
 		log.Printf("failed to insert accept log entry: %s", err.Error())
 	}
 }
 
+// Print all paxos info information
 func (s *PaxosState) PrintPaxosInfo() {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
 	sqlStmt := `SELECT * FROM paxosInfo ORDER BY logIndex ASC`
 	rows, err := s.db.Query(sqlStmt)
 	if err != nil {
@@ -101,7 +116,7 @@ func (s *PaxosState) PrintPaxosInfo() {
 		output = append(output, fmt.Sprintf("(%s,%d)", dec, ballotNumOfHighestVotedForDec))
 		prev = currIdx
 	}
-	fmt.Print(strings.Join(output, ","))
+	fmt.Println(strings.Join(output, ","))
 }
 
 type AcceptedLog struct {
@@ -109,7 +124,10 @@ type AcceptedLog struct {
 	Decree string
 }
 
+// Get a single accepted log entry
 func (s *PaxosState) GetAcceptedLog(logIndex uint64) (*AcceptedLog, error) {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
 	sqlStmt := `SELECT * FROM acceptedLogs WHERE logIndex=?`
 	rows, err := s.db.Query(sqlStmt, logIndex)
 	if err != nil {
@@ -128,24 +146,27 @@ func (s *PaxosState) GetAcceptedLog(logIndex uint64) (*AcceptedLog, error) {
 	return nil, nil
 }
 
+// upsert paxos log instance information
 func (s *PaxosState) UpsertPaxosLogState(logIndex uint64, decree string, ballotNum uint64) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
 	tx, err := s.db.Begin()
 	if err != nil {
 		return err
 	}
 	sqlStmt := `INSERT INTO paxosInfo
-					(logIndex, highestVotedForDecree, ballotNumOfHighestVotedForDecree)
+					(logIndex, decree, ballotNum)
 					VALUES(?,?,?)
 	  				ON CONFLICT(logIndex) DO UPDATE SET
-					  highestVotedForDecree=?,
-					  ballotNumOfHighestVotedForDecree=?`
+					  decree=?,
+					  ballotNum=?`
 
 	stmt, err := tx.Prepare(sqlStmt)
 	if err != nil {
 		return err
 	}
 	defer stmt.Close()
-	_, err = stmt.Exec(logIndex, decree, ballotNum)
+	_, err = stmt.Exec(logIndex, decree, ballotNum, decree, ballotNum)
 	if err != nil {
 		return err
 	}
@@ -156,6 +177,7 @@ func (s *PaxosState) UpsertPaxosLogState(logIndex uint64, decree string, ballotN
 	return nil
 }
 
+// setup db
 func SetupDB(replica uint8) (*PaxosState, error) {
 	log.Printf("setting up persistent storage")
 	path := fmt.Sprintf("%s/paxos-%d.db", DBPath, replica)
@@ -183,12 +205,15 @@ func SetupDB(replica uint8) (*PaxosState, error) {
 	return &PaxosState{db: db, nextBallot: nextBallot}, nil
 }
 
+// Get and update proposal number (only call when sending a prepare message)
 func (state *PaxosState) GetAndUpdateProposalNumber() (uint64, error) {
+	state.mu.Lock()
+	defer state.mu.Unlock()
 	new := atomic.AddUint64(&state.nextBallot, 1)
 	sqlStmt := `UPDATE proposalNumber
 				SET proposalNumber=?
 				WHERE id=1`
-	_, err := state.db.Exec(sqlStmt)
+	_, err := state.db.Exec(sqlStmt, new)
 	if err != nil {
 		log.Printf("Could not update proposal number in table: %s", err.Error())
 		return 0, err
@@ -201,9 +226,11 @@ func (state *PaxosState) GetBallotNumber() uint64 {
 	return state.nextBallot
 }
 
-// Compute all gaps in log and send a prepare message for each entry
-func (state *PaxosState) CreatePrepareRequest() (uint64, error) {
-	sqlStmt := `SELECT (logIndex) FROM acceptedLogs ORDER BY logIndex ASC`
+// Compute first gap in log and send a prepare message for each entry
+func (state *PaxosState) ComputeFirstGapInLog() (uint64, error) {
+	state.mu.RLock()
+	defer state.mu.RUnlock()
+	sqlStmt := `SELECT logIndex FROM acceptedLogs ORDER BY logIndex ASC`
 	rows, err := state.db.Query(sqlStmt)
 	var prev uint64 = 0
 
@@ -226,29 +253,66 @@ func (state *PaxosState) CreatePrepareRequest() (uint64, error) {
 	return prev + 1, nil
 }
 
+func (s *PaxosState) GetMaxAcceptedLogIndex() (uint64, error) {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	sqlStmt := `SELECT COALESCE(MAX(logIndex), 0)
+				FROM acceptedLogs`
+	rows, err := s.db.Query(sqlStmt)
+	if err != nil {
+		log.Printf("Got an error trying to compute the max accepted log entry")
+		return 0, err
+	}
+	defer rows.Close()
+	var idx uint64
+	if rows.Next() {
+		if err = rows.Scan(&idx); err != nil {
+			log.Printf("error scanning for max accepted log: %s", err.Error())
+			return 0, err
+		}
+	} else {
+		return 0, nil
+	}
+	return idx, nil
+}
+
+// Create promise body
 func (state *PaxosState) CreatePrepareResp(prepareBody *rpc.PrepareBody) (*rpc.PromiseBody, error) {
-	sqlStmt := `SELECT (logIndex, highestVotedForDecree, ballotNumOfHighestVotedForDecree)
+	state.mu.Lock()
+	defer state.mu.Unlock()
+	sqlStmt := `SELECT logIndex, decree, ballotNum
 				FROM paxosInfo
-				WHERE logIndex > ?`
+				WHERE logIndex >= ?`
 	rows, err := state.db.Query(sqlStmt, prepareBody.SmallestUndecidedIndex)
 	if err != nil {
 		log.Printf("Could not create promise body: %s", err.Error())
 		return nil, err
 	}
-	resp := rpc.PromiseBody{Decrees: make(map[uint64]string), AckedAsLeader: true, CorrespondingBallotNum: make(map[uint64]uint64)}
+	resp := rpc.PromiseBody{Decrees: make(map[uint64]string), AckedAsLeader: true, BallotNums: make(map[uint64]uint64)}
+
+	sqlStmt = `UPDATE paxosInfo
+				SET ballotNum=?
+				WHERE logIndex=?`
 
 	defer rows.Close()
 	for rows.Next() {
 		var logIndex uint64
-		var highestVotedForDecree string
-		var ballotNumOfHighestVotedForDecree uint64
-		if err = rows.Scan(&logIndex, &highestVotedForDecree, &ballotNumOfHighestVotedForDecree); err != nil {
+		var decree string
+		var ballotNum uint64
+		if err = rows.Scan(&logIndex, &decree, &ballotNum); err != nil {
 			log.Printf("Could not build promise body (during scan): %s", err.Error())
 			return nil, err
 		}
-		if ballotNumOfHighestVotedForDecree < prepareBody.GetProposalNumber() {
-			resp.Decrees[logIndex] = highestVotedForDecree
-			resp.CorrespondingBallotNum[logIndex] = ballotNumOfHighestVotedForDecree
+
+		defer state.db.Exec(sqlStmt, logIndex, prepareBody.GetProposalNumber())
+		if err != nil {
+			log.Printf("failed to update row (during the promise): %s", err.Error())
+			return &rpc.PromiseBody{AckedAsLeader: false}, nil
+		}
+
+		if ballotNum < prepareBody.GetProposalNumber() {
+			resp.Decrees[logIndex] = decree
+			resp.BallotNums[logIndex] = ballotNum
 		} else {
 			return &rpc.PromiseBody{AckedAsLeader: false}, nil
 		}
@@ -256,44 +320,16 @@ func (state *PaxosState) CreatePrepareResp(prepareBody *rpc.PrepareBody) (*rpc.P
 	return &resp, nil
 }
 
-func (state *PaxosState) CreateCurrentReplicaPromiseMaps(logIndex uint64) (*rpc.PromiseBody, error) {
-	sqlStmt := `SELECT (logIndex, highestVotedForDecree, ballotNumOfHighestVotedForDecree)
-		FROM paxosInfo
-		WHERE logIndex > ?`
-	rows, err := state.db.Query(sqlStmt, logIndex)
-	if err != nil {
-		log.Printf("Could not query local databse for sending prepare: %s", err.Error())
-		return nil, err
-	}
-	defer rows.Close()
-	ret := rpc.PromiseBody{Decrees: make(map[uint64]string), CorrespondingBallotNum: make(map[uint64]uint64), AckedAsLeader: true}
-	for rows.Next() {
-		var logIndex uint64
-		var highestVotedForDecree string
-		var ballotNumOfHighestVotedForDecree uint64
-		if err = rows.Scan(&logIndex, &highestVotedForDecree, &ballotNumOfHighestVotedForDecree); err != nil {
-			log.Printf("Could not build promise body (during scan): %s", err.Error())
-			return nil, err
-		}
-		if acceptedLog, _ := DB.GetAcceptedLog(logIndex); acceptedLog != nil {
-			continue
-		}
-		ret.Decrees[logIndex] = highestVotedForDecree
-		ret.CorrespondingBallotNum[logIndex] = ballotNumOfHighestVotedForDecree
-	}
-	return &ret, nil
-}
-
 // Create a table to persist all necessary information
-// highestVotedForDecree: In response to a prepare(n) message
-//           return a map m: logIndex --> highestVotedForDecree
-//           for all rows with ballotNumOfHighestVotedForDecree < n
-// ballotNumOfHighestVotedForDecree: ballot num corresponding to highestVotedForDecree
+// decree: In response to a prepare(n) message
+//           return a map m: logIndex --> decree
+//           for all rows with ballotNum < n
+// ballotNum: ballot num corresponding to decree
 func createPaxosInfoTable(db *sql.DB) error {
 	sqlStmt := `CREATE TABLE IF NOT EXISTS paxosInfo(
 					logIndex UNSIGNED BIG INT NOT NULL PRIMARY KEY,
-					highestVotedForDecree VARCHAR(100),
-					ballotNumOfHighestVotedForDecree INT
+					decree VARCHAR(100),
+					ballotNum INT
 				)`
 	_, err := db.Exec(sqlStmt)
 	if err != nil {
@@ -325,7 +361,7 @@ func createNextBallotNumberTable(db *sql.DB) (uint64, error) {
 	if err != nil {
 		return 0, err
 	}
-	rows, err := db.Query("SELECT (proposalNumber) FROM proposalNumber")
+	rows, err := db.Query("SELECT proposalNumber FROM proposalNumber")
 	if err != nil {
 		log.Printf("Could not initialize proposal number")
 		return 0, err

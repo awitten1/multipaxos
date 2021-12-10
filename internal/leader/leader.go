@@ -25,14 +25,16 @@ func AmILeader() bool {
 }
 
 func BecomeFollower() {
-	//log.Print("Becoming a follower")
 	leadershipState.mu.Lock()
+	if leadershipState.state {
+		log.Print("Becoming a FOLLOWER")
+	}
 	leadershipState.state = false
 	leadershipState.mu.Unlock()
 }
 
 func BecomeLeader() {
-	log.Print("Becoming leader")
+	log.Print("Becoming LEADER")
 	leadershipState.mu.Lock()
 	leadershipState.state = true
 	leadershipState.mu.Unlock()

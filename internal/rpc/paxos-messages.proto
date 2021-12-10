@@ -19,7 +19,7 @@ message PrepareBody {
 
 message PromiseBody {
     map<uint64, string> decrees = 1;
-    map<uint64, uint64> correspondingBallotNum = 2;
+    map<uint64, uint64> ballotNums = 2;
     bool ackedAsLeader = 3;
 }
 
@@ -31,16 +31,15 @@ message AcceptBody {
 
 message AcceptedBody {
     bool accepted = 1;
-    string message = 2;
 }
 
 message CommandBody {
     string decree = 1;
+    uint64 logIndexToUse = 2; // Only used by server sending commands to itself
 }
 
 message CommandResponse {
     bool committed = 1;
-    string errorMessage = 2;
 }
 
 message LearnBody {

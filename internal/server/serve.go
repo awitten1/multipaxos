@@ -7,8 +7,6 @@ import (
 	"net"
 	"time"
 
-	"github.com/awitten1/multipaxos/internal/db"
-	"github.com/awitten1/multipaxos/internal/leader"
 	rpc "github.com/awitten1/multipaxos/internal/rpc"
 	"google.golang.org/grpc"
 )
@@ -19,7 +17,7 @@ var (
 	Peers   []string
 	Replica int8
 	// Only increment while sending Prepare messages
-	NextLogIndex uint64 = 0
+	NextLogIndex uint64
 	N            uint32
 	ServerState  State
 )
@@ -38,7 +36,7 @@ func StartServer(port int) {
 	var opts []grpc.ServerOption
 	grpcServer := grpc.NewServer(opts...)
 	rpc.RegisterPaxosServer(grpcServer, &PaxosServerImpl{})
-	EstablishConnections()
+	EstablishConnections(port)
 	go PrintPaxosInfo()
 	go MonitorHeartbeats(context.Background(), uint32(Replica))
 
@@ -48,12 +46,7 @@ func StartServer(port int) {
 // Log paxos instance state.  Just for the purpose of visibility/debugging
 func PrintPaxosInfo() {
 	for {
-		time.Sleep(10 * time.Second)
-		var state = "FOLLOWER"
-		if leader.AmILeader() {
-			state = "LEADER"
-		}
-		log.Printf("In state: %s", state)
-		db.DB.PrintPaxosInfo()
+		time.Sleep(5 * time.Second)
+		//db.DB.PrintPaxosInfo()
 	}
 }
